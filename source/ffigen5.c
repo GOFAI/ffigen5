@@ -1,3 +1,5 @@
+/* -*- c-basic-offset: 4; -*- */
+
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -15,6 +17,8 @@
 FILE * ffifile;
 
 enum CXChildVisitResult visit_func(CXCursor cursor, CXCursor parent, CXClientData client_data);
+enum CXChildVisitResult visit_fields(CXCursor cursor, CXCursor parent, CXClientData client_data);
+enum CXChildVisitResult visit_struct_preflight(CXCursor cursor, CXCursor parent, CXClientData client_data);
 
 char * get_macro_definition(CXCursor cursor, CXString filename)
 {
@@ -166,7 +170,7 @@ void process_enum_constant_decl(CXCursor cursor, CXString ident, int is_inside_e
     if (is_inside_enum) {
         fprintf(ffifile, "(\"%s\" %lld)", name, value);
     } else {
-        fprintf(ffifile, "(enum-ident (\"\" 0)\n (\"%s\" %lld))\n", name, value);
+        fprintf(ffifile, "(enum-ident (\"\" 0)\n \"%s\" %lld)\n", name, value);
     }
 }
 
@@ -261,8 +265,16 @@ CXType getPointeeType(CXType type)
 {
     CXType pointee_type = clang_getPointeeType(type);
     if (pointee_type.kind == CXType_Unexposed) {
-        debug_print("Debug: libclang unexposed symbol. \n");
-        pointee_type.kind = CXType_Void;
+	CXType canonical_type = clang_getCanonicalType(type);
+	if (canonical_type.kind != CXType_Invalid) {
+	    pointee_type = canonical_type;
+	} else {
+	    CXString name = clang_getTypeSpelling(type);
+	    debug_print("Debug: libclang unexposed type: %s \n",
+			clang_getCString(name));
+	    clang_disposeString(name);
+	    pointee_type.kind = CXType_Void;
+	}
     }
     return pointee_type;
 }
@@ -307,6 +319,7 @@ void format_typedef_reference(CXType type)
 }
 
 void format_type_reference(CXType type);
+
 void format_array(CXType type)
 {
     long long count = clang_getNumElements(type);
@@ -314,6 +327,39 @@ void format_array(CXType type)
     fprintf(ffifile, "(array %lld ", count);
     format_type_reference(element_type);
     fprintf(ffifile, ")");
+}
+
+void format_incomplete_array(CXType type)
+{
+    CXType element_type = clang_getArrayElementType(type);
+    fprintf(ffifile, "(array 0 ");
+    format_type_reference(element_type);
+    fprintf(ffifile, ")");
+}
+
+void
+format_function_proto(CXType type)
+{
+    CXType result_type = clang_getResultType(type);
+    int nargs = clang_getNumArgTypes(type);
+
+    fprintf(ffifile, "(function\n");
+
+    /* args */
+    fprintf(ffifile, "(");
+    for (int i = 0; i < nargs; i++) {
+	CXType arg_type = clang_getArgType(type, i);
+	format_type_reference(arg_type);
+	fputc(' ', ffifile);
+    }
+    if (clang_isFunctionTypeVariadic(type)) {
+	fprintf(ffifile, "(void ())");
+    }
+    fprintf(ffifile, ")\n");
+
+    /* return type */
+    format_type_reference(result_type);
+    fprintf(ffifile, ")\n");
 }
 
 void format_type_reference(CXType type)
@@ -347,6 +393,12 @@ void format_type_reference(CXType type)
     case CXType_ConstantArray:
         format_array(type);
         break;
+    case CXType_IncompleteArray:
+        format_incomplete_array(type);
+        break;
+    case CXType_FunctionProto:
+        format_function_proto(type);
+        break;
     default:
         fprintf(stderr, "Error: reference type %s not implemented.\n", clang_getCString(type_kind_name));
     }
@@ -367,7 +419,7 @@ void process_var_decl(CXCursor cursor, CXString filename, unsigned line, CXStrin
 void process_fields(CXCursor cursor)
 {
     fprintf(ffifile, " (");
-    clang_visitChildren(cursor, visit_func, NULL);
+    clang_visitChildren(cursor, visit_fields, NULL);
     fprintf(ffifile, ")");
 }
 
@@ -391,6 +443,9 @@ void process_field_decl(CXCursor cursor, CXString ident, CXType type)
 
 void process_struct_decl(CXCursor cursor)
 {
+    CXCursor c = cursor;
+    clang_visitChildren(c, visit_struct_preflight, NULL);
+
     fprintf(ffifile, "(struct (\"\" 0)\n");
     fprintf(ffifile, " \"");
     format_ident_name(cursor);
@@ -401,6 +456,9 @@ void process_struct_decl(CXCursor cursor)
 
 void process_union_decl(CXCursor cursor)
 {
+    CXCursor c = cursor;
+    clang_visitChildren(c, visit_struct_preflight, NULL);
+
     fprintf(ffifile, "(union (\"\" 0)\n");
     fprintf(ffifile, " \"");
     format_ident_name(cursor);
@@ -508,6 +566,43 @@ enum CXChildVisitResult visit_func(CXCursor cursor, CXCursor parent, CXClientDat
     return CXChildVisit_Continue;
 }
 
+enum CXChildVisitResult
+visit_fields(CXCursor cursor, CXCursor parent, CXClientData client_data)
+{
+    enum CXCursorKind kind = clang_getCursorKind(cursor);
+    
+    if (kind == CXCursor_FieldDecl) {
+	CXString name = clang_getCursorSpelling(cursor);
+	CXType type = clang_getCursorType(cursor);
+
+	process_field_decl(cursor, name, type);
+    }
+    return CXChildVisit_Continue;
+}
+
+enum CXChildVisitResult
+visit_struct_preflight(CXCursor cursor, CXCursor parent, CXClientData context)
+{
+    enum CXCursorKind kind = clang_getCursorKind(cursor);
+
+    if (kind == CXCursor_UnionDecl) {
+	fprintf(ffifile, "(union (\"\" 0)\n");
+	fprintf(ffifile, " \"");
+	format_ident_name(cursor);
+	fprintf(ffifile, "\"\n");
+	process_fields(cursor);
+	fprintf(ffifile, ")\n");
+    } else if (kind == CXCursor_StructDecl) {
+	fprintf(ffifile, "(struct (\"\" 0)\n");
+	fprintf(ffifile, " \"");
+	format_ident_name(cursor);
+	fprintf(ffifile, "\"\n");
+	process_fields(cursor);
+	fprintf(ffifile, ")\n");
+    }
+    return CXChildVisit_Continue;
+}
+
 void process_predefined_macro_definitions(CXIndex index)
 {
     system(DUMP_CMD " > " PREDEFINED_HEADER_PATH);
@@ -527,7 +622,7 @@ void process_predefined_macro_definitions(CXIndex index)
     clang_disposeTranslationUnit(unit);
 }
 
-int set_output_file(int argc, char * argv[])
+int set_output_file(int argc, const char *argv[])
 {
     int i;
     for(i = 0; i < argc - 1; i++) {
@@ -544,16 +639,14 @@ int set_output_file(int argc, char * argv[])
     return 0;
 }
 
-int main(int argc, char *argv[])
+int main(int argc, const char *argv[])
 {
-    CXIndex index = clang_createIndex(0, 0);
+    CXIndex index = clang_createIndex(0, 1);
     CXTranslationUnit unit = clang_parseTranslationUnit(
-        index, NULL,
-        (const char * const *)argv, argc,
-        NULL, 0,
-        CXTranslationUnit_DetailedPreprocessingRecord |
-        CXTranslationUnit_SkipFunctionBodies
-        );
+      index, 0, argv, argc, 0, 0,
+      CXTranslationUnit_DetailedPreprocessingRecord |
+      CXTranslationUnit_SkipFunctionBodies
+      );
 
     if (unit == NULL) {
         fprintf(stderr, "Unable to parse translation unit. Quitting.\n");
@@ -566,7 +659,7 @@ int main(int argc, char *argv[])
         clang_disposeTranslationUnit(unit);
     }
 
-    process_predefined_macro_definitions(index);
+    //process_predefined_macro_definitions(index);
 
     CXCursor root = clang_getTranslationUnitCursor(unit);
     clang_visitChildren(root, visit_func, NULL);
