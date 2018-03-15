@@ -337,6 +337,33 @@ void format_incomplete_array(CXType type)
     fprintf(ffifile, ")");
 }
 
+/*
+ * This is a crock to deal with function prototypes with null-length
+ * arrays, as in poll(2):
+ *
+ * int poll(struct pollfd fds[], nfds_t nfds, int timeout);
+ *
+ * In this situation, for the type of the first argument, old ffigen produces
+ * (pointer (struct-ref "pollfd")).  In this libclang-based code, we would
+ * instead generate (array 0 (struct-ref "pollfd")).
+ *
+ * The Lisp code in CCL somehow doesn't handle the (array 0 ...)  case
+ * correctly, so we work around that here by notating it as a pointer
+ * instead.
+ */
+void
+format_arg_type(CXType type)
+{
+    if (type.kind == CXType_IncompleteArray) {
+	CXType element_type = clang_getArrayElementType(type);
+	fprintf(ffifile, "(pointer ");
+	format_type_reference(element_type);
+	fprintf(ffifile, ")");
+    } else {
+	format_type_reference(type);
+    }
+}
+						
 void
 format_function_proto(CXType type)
 {
@@ -349,7 +376,7 @@ format_function_proto(CXType type)
     fprintf(ffifile, "(");
     for (int i = 0; i < nargs; i++) {
 	CXType arg_type = clang_getArgType(type, i);
-	format_type_reference(arg_type);
+	format_arg_type(arg_type);
 	fputc(' ', ffifile);
     }
     if (clang_isFunctionTypeVariadic(type)) {
@@ -483,7 +510,7 @@ void process_function_params(CXType type)
 
     fprintf(ffifile, "  (");
     for (i = 0; i < num_args; i++) {
-        format_type_reference(clang_getArgType(type, i));
+        format_arg_type(clang_getArgType(type, i));
         if (i != num_args - 1) {
             fprintf(ffifile, " ");
         }
