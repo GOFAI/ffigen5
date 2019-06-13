@@ -351,8 +351,7 @@ void format_incomplete_array(CXType type)
  * correctly, so we work around that here by notating it as a pointer
  * instead.
  */
-void
-format_arg_type(CXType type)
+void format_arg_type(CXType type)
 {
     if (type.kind == CXType_IncompleteArray) {
 	CXType element_type = clang_getArrayElementType(type);
@@ -364,8 +363,7 @@ format_arg_type(CXType type)
     }
 }
 						
-void
-format_function_proto(CXType type)
+void format_function_proto(CXType type)
 {
     CXType result_type = clang_getResultType(type);
     int nargs = clang_getNumArgTypes(type);
@@ -387,6 +385,14 @@ format_function_proto(CXType type)
     /* return type */
     format_type_reference(result_type);
     fprintf(ffifile, ")\n");
+}
+
+void format_objc_object_pointer(CXType type)
+{
+    CXType pointee = getPointeeType(type); // necessary?
+    CXString pointee_type_name = clang_getTypeSpelling(pointee);
+    fprintf(ffifile, "(pointer (struct-ref \"%s\"))", clang_getCString(pointee_type_name));
+    clang_disposeString(pointee_type_name);
 }
 
 void format_type_reference(CXType type)
@@ -426,6 +432,8 @@ void format_type_reference(CXType type)
     case CXType_FunctionProto:
         format_function_proto(type);
         break;
+    case CXType_ObjCObjectPointer:
+	format_objc_object_pointer(type);
     default:
         fprintf(stderr, "Error: reference type %s not implemented.\n", clang_getCString(type_kind_name));
     }
@@ -543,6 +551,250 @@ void process_function_decl(CXCursor cursor, CXString filename, unsigned line, CX
     fprintf(ffifile, ")\n");
 }
 
+
+/* void format_objc_method_return(CXCursor cursor) */
+/* { */
+/*     CXType return_type = clang_getCursorResultType(cursor); */
+/*     if (type == CXType_ObjCObjectPointer) { */
+/* 	type = clang_Type_getObjCObjectBaseType(clang_getPointeeType(cursor)); */
+/* 	CXString typename = clang_getTypeSpelling(type); */
+/* 	fprintf(ffifile, "(pointer (struct-ref \"%s\"))", clang_getCString(typename)); */
+/* 	clang_disposeString(typename); */
+/*     } else { */
+/*     format_type_reference(return_type); */
+/*     } */
+/* } */
+
+/* enum CXChildVisitResult objc_visit_func(CXCursor cursor, CXCursor parent, CXClientData client_data) */
+/* { */
+/*     enum CXCursorKind kind = clang_getCursorKind(cursor); */
+/*     if (kind == CXCursor_ObjCClassMethodDecl) { */
+/* 	process_objc_class_method_decl(cursor); */
+/*     } else if (kind == CXCursor_ObjCInstanceMethodDecl) { */
+/* 	process_objc_instance_method_decl(cursor); */
+/*     }	 */
+/* } */
+
+enum CXChildVisitResult superclass_func(CXCursor cursor, CXCursor parent, CXClientData client_data)
+{
+    enum CXCursorKind kind = clang_getCursorKind(cursor);
+    if (kind == CXCursor_ObjCSuperClassRef) {
+	CXType type = clang_getCursorType(cursor);
+	CXString superclass = clang_getTypeSpelling(type);
+	fprintf(ffifile, "\"%s\"", clang_getCString(superclass));
+	return CXChildVisit_Break;
+    } else {
+	return CXChildVisit_Continue;
+    }
+}
+
+void format_objc_superclass(CXCursor cursor)
+{
+    fprintf(ffifile, " (");
+    clang_visitChildren(cursor, superclass_func, NULL);
+    fprintf(ffifile, ")\n");
+}
+
+enum CXChildVisitResult protocols_func(CXCursor cursor, CXCursor parent, CXClientData client_data)
+{
+    enum CXCursorKind kind = clang_getCursorKind(cursor);
+    if (kind == CXCursor_ObjCProtocolRef) {
+	CXString protocol_name = clang_getCursorSpelling(cursor);
+	fprintf(ffifile, "\"%s\" ", clang_getCString(protocol_name));
+    }
+    return CXChildVisit_Continue;
+}
+
+void format_objc_interface_protocols(CXCursor cursor)
+{
+    fprintf(ffifile, " (");
+    clang_visitChildren(cursor, protocols_func, NULL);
+    fprintf(ffifile, ")\n");
+}
+
+enum CXChildVisitResult ivars_func(CXCursor cursor, CXCursor parent, CXClientData client_data)
+{
+    enum CXCursorKind kind = clang_getCursorKind(cursor);
+    if (kind == CXCursor_ObjCIvarDecl) {
+	CXString ivar_name = clang_getCursorSpelling(cursor);
+	CXType type = clang_getCursorType(cursor);
+	fprintf(ffifile, "(\"%s\" ", clang_getCString(ivar_name));
+	format_type_reference(type);
+	// format offset (as 0), size
+	fprintf(ffifile, " 0 %lld)\n", clang_Type_getSizeOf(type));
+	clang_disposeString(ivar_name);
+    }
+    return CXChildVisit_Continue;
+}
+
+void format_objc_interface_ivars(CXCursor cursor)
+{
+    fprintf(ffifile, " (");
+    clang_visitChildren(cursor, ivars_func, NULL);
+    fprintf(ffifile, ")");
+}
+
+void format_objc_method(CXCursor cursor, CXCursor parent)
+{
+    CXSourceLocation location = clang_getCursorLocation(cursor);
+    unsigned line;
+    CXFile file;
+    clang_getSpellingLocation(location, &file, &line, NULL, NULL);
+    CXString filename = clang_getFileName(file);
+    CXString message_name = clang_getCursorSpelling(cursor);
+    CXString parent_name = clang_getCursorSpelling(parent);
+    CXType result_type = clang_getCursorResultType(cursor);
+    unsigned num_args = clang_Cursor_getNumArguments(cursor);
+    int i;
+    fprintf(ffifile, "(\"%s\" %u)\n", clang_getCString(filename), line);
+    fprintf(ffifile, " \"%s\"\n", clang_getCString(parent_name));
+    fprintf(ffifile, " (\"%s\")\n", ""); // category name ignored by parse-ffi.lisp
+    fprintf(ffifile, " \"%s\"\n", clang_getCString(message_name));
+    fprintf(ffifile, " (");
+    // print args
+    for (i = 0; i < num_args; i++) {
+	CXType arg_type = clang_getCursorType(clang_Cursor_getArgument(cursor, i));
+        format_arg_type(arg_type);
+        if (i != num_args - 1) {
+            fprintf(ffifile, " ");
+        }
+    }
+    if (clang_Cursor_isVariadic(cursor)) {
+	if (num_args  > 0) {
+            fprintf(ffifile, " ");
+        }
+        fprintf(ffifile, "(void ())");
+    }
+    fprintf(ffifile, ")\n");
+    // print return type
+    format_arg_type(result_type);
+    fprintf(ffifile, ")\n");
+    clang_disposeString(filename);
+    clang_disposeString(message_name);
+    clang_disposeString(parent_name);
+}
+
+enum CXChildVisitResult objc_interface_method_func(CXCursor cursor, CXCursor parent, CXClientData client_data)
+{
+    enum CXCursorKind kind = clang_getCursorKind(cursor);
+    if (kind == CXCursor_ObjCClassMethodDecl) {
+	fprintf(ffifile, "(objc-class-method ");
+	format_objc_method(cursor, parent);
+    } else if (kind == CXCursor_ObjCInstanceMethodDecl) {
+	fprintf(ffifile, "(objc-instance-method ");
+	format_objc_method(cursor, parent);
+    }
+    return CXChildVisit_Continue;	
+}
+
+void process_objc_interface_decl(CXCursor cursor, CXString filename, unsigned line, CXString ident)
+{
+    fprintf(ffifile, "(objc-class (\"%s\" %u)\n", clang_getCString(filename), line);
+    fprintf(ffifile, " \"%s\"\n", clang_getCString(ident));
+    format_objc_superclass(cursor);
+    format_objc_interface_protocols(cursor);
+    // format_objc_interface_ivars(cursor);
+    fprintf(ffifile, "()"); // ignore ivars
+    fprintf(ffifile, ")\n");
+    clang_visitChildren(cursor, objc_interface_method_func, NULL);
+}
+
+enum CXChildVisitResult objc_protocol_method_func(CXCursor cursor, CXCursor parent, CXClientData client_data)
+{
+    enum CXCursorKind kind = clang_getCursorKind(cursor);
+    if (kind == CXCursor_ObjCClassMethodDecl) {
+	fprintf(ffifile, "(objc-protocol-class-method ");
+	format_objc_method(cursor, parent);
+    } else if (kind == CXCursor_ObjCInstanceMethodDecl) {
+	fprintf(ffifile, "(objc-protocol-instance-method ");
+	format_objc_method(cursor, parent);
+    }
+    return CXChildVisit_Continue;
+}
+
+void process_objc_protocol_decl(CXCursor cursor)
+{
+    clang_visitChildren(cursor, objc_protocol_method_func, NULL);
+}
+
+enum CXChildVisitResult objc_class_func(CXCursor cursor, CXCursor parent, CXClientData client_data)
+{
+    enum CXCursorKind kind = clang_getCursorKind(cursor);
+    if (kind == CXCursor_ObjCClassRef) {
+	CXType type = clang_getCursorType(cursor);
+	CXString class = clang_getTypeSpelling(type);
+	fprintf(ffifile, "\"%s\"", clang_getCString(class));
+	return CXChildVisit_Break;
+    } else {
+	return CXChildVisit_Continue;
+    }
+}
+
+void format_objc_category_class(CXCursor cursor)
+{
+    clang_visitChildren(cursor, objc_class_func, NULL);
+    fprintf(ffifile, "\n");
+}
+
+void format_objc_category_method(CXCursor cursor, CXCursor parent)
+{
+    CXSourceLocation location = clang_getCursorLocation(cursor);
+    unsigned line;
+    CXFile file;
+    clang_getSpellingLocation(location, &file, &line, NULL, NULL);
+    CXString filename = clang_getFileName(file);
+    CXString message_name = clang_getCursorSpelling(cursor);
+    CXString category_name = clang_getCursorSpelling(parent);
+    CXType result_type = clang_getCursorResultType(cursor);
+    unsigned num_args = clang_Cursor_getNumArguments(cursor);
+    int i;
+    fprintf(ffifile, "(\"%s\" %u)\n", clang_getCString(filename), line);
+    // format name of objc category class
+    format_objc_category_class(parent);
+    fprintf(ffifile, " (\"%s\")\n", clang_getCString(category_name)); // category name ignored by parse-ffi.lisp
+    fprintf(ffifile, " \"%s\"\n", clang_getCString(message_name));
+    fprintf(ffifile, " (");
+    // print args
+    for (i = 0; i < num_args; i++) {
+	CXType arg_type = clang_getCursorType(clang_Cursor_getArgument(cursor, i));
+        format_arg_type(arg_type);
+        if (i != num_args - 1) {
+            fprintf(ffifile, " ");
+        }
+    }
+    if (clang_Cursor_isVariadic(cursor)) {
+	if (num_args  > 0) {
+            fprintf(ffifile, " ");
+        }
+        fprintf(ffifile, "(void ())");
+    }
+    fprintf(ffifile, ")\n");
+    // print return type
+    format_arg_type(result_type);
+    fprintf(ffifile, ")\n");
+    clang_disposeString(filename);
+    clang_disposeString(message_name);
+    clang_disposeString(category_name);
+}
+
+enum CXChildVisitResult objc_category_method_func(CXCursor cursor, CXCursor parent, CXClientData client_data)
+{
+    enum CXCursorKind kind = clang_getCursorKind(cursor);
+    if (kind == CXCursor_ObjCClassMethodDecl) {
+	fprintf(ffifile, "(objc-class-method ");
+	format_objc_category_method(cursor, parent);
+    } else if (kind == CXCursor_ObjCInstanceMethodDecl) {
+	fprintf(ffifile, "(objc-instance-method ");
+	format_objc_category_method(cursor, parent);
+    }
+    return CXChildVisit_Continue;	
+}
+
+void process_objc_category_decl(CXCursor cursor)
+{
+    clang_visitChildren(cursor, objc_category_method_func, NULL);
+}
+
 enum CXChildVisitResult visit_func(CXCursor cursor, CXCursor parent, CXClientData client_data)
 {
     CXSourceLocation location = clang_getCursorLocation(cursor);
@@ -584,6 +836,15 @@ enum CXChildVisitResult visit_func(CXCursor cursor, CXCursor parent, CXClientDat
     case CXCursor_TypedefDecl:
         process_typedef_decl(cursor, filename, line, ident);
         break;
+    case CXCursor_ObjCInterfaceDecl:
+	process_objc_interface_decl(cursor, filename, line, ident);
+	break;
+    case CXCursor_ObjCProtocolDecl:
+	process_objc_protocol_decl(cursor);
+	break;
+    case CXCursor_ObjCCategoryDecl:
+	process_objc_category_decl(cursor);
+	break;
     default:
         break;
     }
