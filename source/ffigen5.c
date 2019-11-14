@@ -395,6 +395,51 @@ void format_objc_object_pointer(CXType type)
     clang_disposeString(pointee_type_name);
 }
 
+void format_objc_id(CXType type)
+{
+    CXType pointee = getPointeeType(type); // necessary?
+    // CXString pointee_type_name = clang_getTypeSpelling(pointee);
+    // fprintf(ffifile, " OBJC_ID ");
+    fprintf(ffifile, "(typedef \"Id\")");
+    // clang_disposeString(pointee_type_name);
+}
+
+void format_objc_sel(CXType type)
+{
+    CXType pointee = getPointeeType(type); // necessary?
+    // CXString pointee_type_name = clang_getTypeSpelling(pointee);
+    // fprintf(ffifile, " OBJC_SEL ");
+    fprintf(ffifile, "(typedef \"SEL\")");
+    // clang_disposeString(pointee_type_name);
+}
+
+void format_objc_type_param(CXType type)
+{
+    CXType pointee = getPointeeType(type); // necessary?
+    // CXString pointee_type_name = clang_getTypeSpelling(pointee);
+    // fprintf(ffifile, " OBJC_TYPE_PARAM ");
+    fprintf(ffifile, "(typedef \"id\")");
+    // clang_disposeString(pointee_type_name);
+}
+
+void format_objc_class(CXType type)
+{
+    CXType pointee = getPointeeType(type); // necessary?
+    // CXString pointee_type_name = clang_getTypeSpelling(pointee);
+    // fprintf(ffifile, " OBJC_CLASS ");
+    fprintf(ffifile, "(typedef \"Class\")");
+    // clang_disposeString(pointee_type_name);
+}
+
+void format_block_pointer(CXType type)
+{
+    CXType pointee = getPointeeType(type); // necessary?
+    // CXString pointee_type_name = clang_getTypeSpelling(pointee);
+    // fprintf(ffifile, " BLOCK_POINTER ");
+    fprintf(ffifile, "(void ())");
+    // clang_disposeString(pointee_type_name);
+}
+
 void format_type_reference(CXType type)
 {
     enum CXTypeKind kind = type.kind;
@@ -434,6 +479,22 @@ void format_type_reference(CXType type)
         break;
     case CXType_ObjCObjectPointer:
 	format_objc_object_pointer(type);
+	break;
+    case CXType_ObjCId:
+	format_objc_id(type);
+	break;
+    case CXType_ObjCSel:
+	format_objc_sel(type);
+	break;
+    case CXType_ObjCTypeParam:
+	format_objc_type_param(type);
+	break;
+    case CXType_ObjCClass:
+	format_objc_class(type);
+	break;
+    case CXType_BlockPointer:
+	format_block_pointer(type);
+	break;
     default:
         fprintf(stderr, "Error: reference type %s not implemented.\n", clang_getCString(type_kind_name));
     }
@@ -665,7 +726,7 @@ void format_objc_method(CXCursor cursor, CXCursor parent)
         }
         fprintf(ffifile, "(void ())");
     }
-    fprintf(ffifile, ")\n");
+    fprintf(ffifile, ")\n ");
     // print return type
     format_arg_type(result_type);
     fprintf(ffifile, ")\n");
