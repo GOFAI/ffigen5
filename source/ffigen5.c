@@ -337,6 +337,15 @@ void format_incomplete_array(CXType type)
     fprintf(ffifile, ")");
 }
 
+void format_ext_vector(CXType type)
+{
+    long long count = clang_getNumElements(type);
+    CXType element_type = clang_getElementType(type);
+    fprintf(ffifile, "(array %lld ", count);
+    format_type_reference(element_type);
+    fprintf(ffifile, ")");
+}
+
 /*
  * This is a crock to deal with function prototypes with null-length
  * arrays, as in poll(2):
@@ -397,16 +406,16 @@ void format_objc_object_pointer(CXType type)
 
 void format_objc_id(CXType type)
 {
-    CXType pointee = getPointeeType(type); // necessary?
+    // CXType pointee = getPointeeType(type); // necessary?
     // CXString pointee_type_name = clang_getTypeSpelling(pointee);
     // fprintf(ffifile, " OBJC_ID ");
-    fprintf(ffifile, "(typedef \"Id\")");
+    fprintf(ffifile, "(typedef \"id\")");
     // clang_disposeString(pointee_type_name);
 }
 
 void format_objc_sel(CXType type)
 {
-    CXType pointee = getPointeeType(type); // necessary?
+    // CXType pointee = getPointeeType(type); // necessary?
     // CXString pointee_type_name = clang_getTypeSpelling(pointee);
     // fprintf(ffifile, " OBJC_SEL ");
     fprintf(ffifile, "(typedef \"SEL\")");
@@ -415,7 +424,7 @@ void format_objc_sel(CXType type)
 
 void format_objc_type_param(CXType type)
 {
-    CXType pointee = getPointeeType(type); // necessary?
+    // CXType pointee = getPointeeType(type); // necessary?
     // CXString pointee_type_name = clang_getTypeSpelling(pointee);
     // fprintf(ffifile, " OBJC_TYPE_PARAM ");
     fprintf(ffifile, "(typedef \"id\")");
@@ -424,7 +433,7 @@ void format_objc_type_param(CXType type)
 
 void format_objc_class(CXType type)
 {
-    CXType pointee = getPointeeType(type); // necessary?
+    // CXType pointee = getPointeeType(type); // necessary?
     // CXString pointee_type_name = clang_getTypeSpelling(pointee);
     // fprintf(ffifile, " OBJC_CLASS ");
     fprintf(ffifile, "(typedef \"Class\")");
@@ -433,7 +442,7 @@ void format_objc_class(CXType type)
 
 void format_block_pointer(CXType type)
 {
-    CXType pointee = getPointeeType(type); // necessary?
+    // CXType pointee = getPointeeType(type); // necessary?
     // CXString pointee_type_name = clang_getTypeSpelling(pointee);
     // fprintf(ffifile, " BLOCK_POINTER ");
     fprintf(ffifile, "(void ())");
@@ -495,6 +504,13 @@ void format_type_reference(CXType type)
     case CXType_BlockPointer:
 	format_block_pointer(type);
 	break;
+    case CXType_ExtVector:
+	format_ext_vector(type);
+        break;
+	// case CXType_Unexposed:
+	// fprintf(ffifile, " UNEXPOSED ");
+	// format_typedef_reference(type);
+	// break;
     default:
         fprintf(stderr, "Error: reference type %s not implemented.\n", clang_getCString(type_kind_name));
     }
