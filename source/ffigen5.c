@@ -399,6 +399,10 @@ void format_function_proto(CXType type)
 void format_objc_object_pointer(CXType type)
 {
     CXType pointee = getPointeeType(type); // necessary?
+    // TODO: add handler code to deal with protocol-qualified types
+    if (clang_Type_getNumObjCProtocolRefs(pointee) > 0) {
+	pointee = clang_Type_getObjCObjectBaseType(pointee);
+    }
     CXString pointee_type_name = clang_getTypeSpelling(pointee);
     fprintf(ffifile, "(pointer (struct-ref \"%s\"))", clang_getCString(pointee_type_name));
     clang_disposeString(pointee_type_name);
