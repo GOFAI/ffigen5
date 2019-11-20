@@ -255,7 +255,8 @@ void format_c_primitive_type(CXType type, enum CXTypeKind kind)
     if (kind == CXType_Complex) {
         fprintf(ffifile, "(complex-%s ())", map[clang_getElementType(type).kind]);
     } else if (kind == CXType_Vector) {
-        fprintf(ffifile, "(__vector-%s ())", map[clang_getElementType(type).kind]);
+        // fprintf(ffifile, "(__vector-%s ())", map[clang_getElementType(type).kind]);
+	fprintf(ffifile, "(%s ())", map[clang_getElementType(type).kind]);
     } else {
         fprintf(ffifile, "(%s ())", map[kind]);
     }
@@ -400,9 +401,10 @@ void format_objc_object_pointer(CXType type)
 {
     CXType pointee = getPointeeType(type); // necessary?
     // TODO: add handler code to deal with protocol-qualified types
-    if (clang_Type_getNumObjCProtocolRefs(pointee) > 0) {
-	pointee = clang_Type_getObjCObjectBaseType(pointee);
-    }
+    /* if (clang_Type_getNumObjCProtocolRefs(pointee) > 0) { */
+    /* 	pointee = clang_Type_getObjCObjectBaseType(pointee); */
+    /* } */
+    pointee = clang_Type_getObjCObjectBaseType(pointee);
     CXString pointee_type_name = clang_getTypeSpelling(pointee);
     fprintf(ffifile, "(pointer (struct-ref \"%s\"))", clang_getCString(pointee_type_name));
     clang_disposeString(pointee_type_name);
@@ -511,10 +513,6 @@ void format_type_reference(CXType type)
     case CXType_ExtVector:
 	format_ext_vector(type);
         break;
-	// case CXType_Unexposed:
-	// fprintf(ffifile, " UNEXPOSED ");
-	// format_typedef_reference(type);
-	// break;
     default:
         fprintf(stderr, "Error: reference type %s not implemented.\n", clang_getCString(type_kind_name));
     }
@@ -550,10 +548,17 @@ void process_field_decl(CXCursor cursor, CXString ident, CXType type)
                 clang_getFieldDeclBitWidth(cursor));
     } else {
         fprintf(ffifile, "(field ");
+	// TODO: treat CXType_IncompleteArray as pointer here
+	if (type.kind == CXType_IncompleteArray) {
+	    format_incomplete_array(type);
+	    fprintf(ffifile, " %lld 0))\n", // ffigen4 gives these width 0
+		    clang_Cursor_getOffsetOfField(cursor) >> 3);
+	} else {
         format_type_reference(type);
         fprintf(ffifile, " %lld %lld))\n",
                 clang_Cursor_getOffsetOfField(cursor) >> 3,
-                clang_Type_getSizeOf(type));
+                clang_Type_getSizeOf(type)); // -2 is error code for  CXTypeLayoutError_Incomplete
+	}
     }
 }
 
