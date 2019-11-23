@@ -448,10 +448,13 @@ void format_objc_class(CXType type)
 
 void format_block_pointer(CXType type)
 {
-    // CXType pointee = getPointeeType(type); // necessary?
+    CXType pointee = getPointeeType(type); // necessary?
     // CXString pointee_type_name = clang_getTypeSpelling(pointee);
     // fprintf(ffifile, " BLOCK_POINTER ");
-    fprintf(ffifile, "(void ())");
+    // fprintf(ffifile, "(void ())");
+    fprintf(ffifile, "(pointer ");
+    format_function_proto(pointee);
+    fprintf(ffifile, ")");
     // clang_disposeString(pointee_type_name);
 }
 
