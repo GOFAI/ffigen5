@@ -397,6 +397,11 @@ void format_function_proto(CXType type)
     fprintf(ffifile, ")\n");
 }
 
+void format_function_no_proto(CXType type)
+{
+    fprintf(ffifile, "(void ())");
+}
+
 void format_objc_object_pointer(CXType type)
 {
     CXType pointee = getPointeeType(type); // necessary?
@@ -516,6 +521,9 @@ void format_type_reference(CXType type)
     case CXType_ExtVector:
 	format_ext_vector(type);
         break;
+    case CXType_FunctionNoProto:
+	format_function_no_proto(type);
+	break;
     default:
         fprintf(stderr, "Error: reference type %s not implemented.\n", clang_getCString(type_kind_name));
     }
